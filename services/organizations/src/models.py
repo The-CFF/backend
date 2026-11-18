@@ -43,6 +43,10 @@ class Membership(db.Model):
         db.UniqueConstraint(
             "organization_id", "school_email", name="unique_org_school_email"
         ),
+        db.Index(
+            "ix_membership_user_org_verified",
+            "user_id", "organization_id", "is_verified",
+        ),
     )
 
 

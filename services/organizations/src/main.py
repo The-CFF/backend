@@ -15,6 +15,7 @@ from flask_cors import CORS
 
 from email_service import EmailDeliveryError, send_verification_email
 from models import Membership, Organization, VerificationToken, db
+from sqlalchemy.orm import aliased
 
 
 app = Flask(__name__)
@@ -367,6 +368,7 @@ def shared_membership():
         return error("ORGANIZATION_SERVICE_TOKEN is not configured", 503)
     if not hmac.compare_digest(request_token, configured_token):
         return error("Invalid internal service token", 401)
+
     data = get_json()
     viewer_id = data.get("viewer_id")
     subject_id = data.get("subject_id")
@@ -374,23 +376,24 @@ def shared_membership():
         return error("viewer_id and subject_id are required")
     if viewer_id == subject_id:
         return jsonify({"shared": True})
-    viewer_orgs = db.session.query(Membership.organization_id).filter_by(
-        user_id=viewer_id, is_verified=True
+
+    vm = aliased(Membership)
+    sm = aliased(Membership)
+
+    shared_q = (
+        db.session.query(vm.id)
+        .join(sm, sm.organization_id == vm.organization_id)
+        .filter(
+            vm.user_id == viewer_id,
+            vm.is_verified.is_(True),
+            sm.user_id == subject_id,
+            sm.is_verified.is_(True),
+        )
     )
-    subject_orgs = db.session.query(Membership.organization_id).filter_by(
-        user_id=subject_id, is_verified=True
-    )
-    shared = db.session.query(Membership.id).filter(
-        Membership.organization_id.in_(viewer_orgs),
-        Membership.organization_id.in_(subject_orgs),
-        Membership.is_verified.is_(True),
-    ).first() is not None
-    return jsonify({"shared": shared})
+    shared = db.session.query(shared_q.exists()).scalar()
+    return jsonify({"shared": bool(shared)})
 
 
 with app.app_context():
     db.create_all()
 
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5004")))
